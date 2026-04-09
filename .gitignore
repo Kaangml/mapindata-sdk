@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Test / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Spark / Java
+derby.log
+metastore_db/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Data files — commit etme
+*.parquet
+*.csv
+*.json
+*.pkl
+*.h5
+data/
+
+# Secrets — asla commit etme
+.env
+*.pem
+*.key
+credentials.json

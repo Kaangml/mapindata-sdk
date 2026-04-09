@@ -1,0 +1,1 @@
+"""mapindata test paketi."""

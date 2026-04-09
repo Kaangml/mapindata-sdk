@@ -1,0 +1,121 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ---------------------------------------------------------------------------
+# Proje Metadata
+# ---------------------------------------------------------------------------
+[project]
+name = "mapindata-sdk"
+version = "0.1.0"
+description = "MapinData Analytics & Mobility Intelligence SDK"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "MapinData", email = "dev@mapindata.com" }]
+keywords = ["mobility", "analytics", "geospatial", "footfall"]
+
+# Temel bağımlılıklar — her kurulumda zorunlu
+dependencies = [
+    "python-dotenv>=1.0.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+    "shapely>=2.0.0",
+]
+
+# ---------------------------------------------------------------------------
+# Opsiyonel Bağımlılıklar (Extras)
+# Kurulum: pip install mapindata-sdk[data]
+# ---------------------------------------------------------------------------
+[project.optional-dependencies]
+data = [
+    "boto3>=1.28.0",
+    "psycopg2-binary>=2.9.0",
+    "sqlalchemy>=2.0.0",
+    "pyspark>=3.5.0",
+    "pyarrow>=14.0.0",
+]
+mobility = [
+    "mapindata-sdk[data]",
+    "geopandas>=0.14.0",
+    "h3>=3.7.0",
+]
+scraping = [
+    "playwright>=1.40.0",
+    "apify-client>=1.6.0",
+    "aiohttp>=3.9.0",
+    "httpx>=0.26.0",
+]
+nlp = [
+    "transformers>=4.35.0",
+    "torch>=2.0.0",
+    "langdetect>=1.0.9",
+]
+all = [
+    "mapindata-sdk[data,mobility,scraping,nlp]",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mapindata"]
+
+# ---------------------------------------------------------------------------
+# Ruff — Linting & Formatting
+# Doküman: https://docs.astral.sh/ruff/
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src"]
+
+[tool.ruff.lint]
+# E: pycodestyle errors | F: pyflakes | I: isort | N: pep8-naming | UP: pyupgrade
+select = ["E", "F", "I", "N", "UP"]
+ignore = [
+    # MapinData Kod Standardı: fonksiyon ve değişken adları camelCase kullanır.
+    # Bu PEP8 ile çeliştiğinden N802/N803/N806 devre dışı bırakılmıştır.
+    "N802",  # Fonksiyon adı camelCase olabilir (haversineDistance, calculateByPolygon...)
+    "N803",  # Parametre adı camelCase olabilir
+    "N806",  # Fonksiyon içi değişken camelCase olabilir
+]
+
+[tool.ruff.lint.pep8-naming]
+# PascalCase class decorator istisnası
+classmethod-decorators = ["classmethod"]
+# camelCase fonksiyon adlarına izin veren pattern (N802 ignore ile beraber çalışır)
+ignore-names = ["*"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mapindata"]
+force-sort-within-sections = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = "--cov=src/mapindata --cov-report=term-missing -v"
+
+[tool.coverage.run]
+source = ["src/mapindata"]
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = ["if TYPE_CHECKING:", "raise NotImplementedError"]
