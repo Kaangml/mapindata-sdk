@@ -3,34 +3,21 @@
 Bu dosya, SDK'nın gelecek sürümlerinde eklenecek özellikleri tanımlar.  
 Buradaki hiçbir özellik mevcut sürümde implement edilmemiştir.
 
+Bir özellik tamamlandığında buradan **silinir** ve [development-history.md](development-history.md) tablosuna eklenir.  
 Katkı veya öncelik güncellemesi için PR açınız.
 
 ---
 
-## FF-001 — Tek Device Takibi
+## FF-001 — Çoklu Device Takibi (DataFrame Bazlı)
 
 **Modül:** `mobility`  
-**Planlanan sınıf/metod:** `FootfallEngine.getDeviceHistory(deviceId, records)`  
+**Planlanan sınıf/metod:** `FootfallEngine.getDeviceHistory(devicesDF, mobilityDF)`  
 **Açıklama:**  
-Belirli bir `device_aid` değerine ait tüm konum kayıtlarını kronolojik olarak döndürür.  
-Yolculuk analizi ve dwell time hesabına temel oluşturur.
-
----
-
-## FF-002 — S3 Veri Okuma (`S3Client` / `loadData`)
-
-**Modül:** `data`  
-**Planlanan sınıf/metod:** `S3Client`, `S3Client.loadData(path, format)`  
-**Açıklama:**  
-S3'teki ham mobil veriyi (parquet, csv) okuyarak Spark DataFrame döndürür.  
-İki bağlantı modu desteklenecek:
-
-| Mod | Açıklama |
-|---|---|
-| `iam_role` | EC2 üzerinde çalışırken IAM role ile kimlik doğrulama |
-| `access_key` | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` ile kimlik doğrulama |
-
-Çoklu S3 yolu ve partition filter (örn. `province=Istanbul`) desteği de kapsama dahildir.
+Bir Spark DataFrame içindeki tüm device_aid değerlerini alarak bu cihazlara ait tüm
+mobil veri sinyallerini tam mobility verisinden filtreler ve döndürür.  
+Tek cihaz değil; bir footfall analizinden çıkan device seti için toplu yolculuk/konum
+geçmişi çıkartmayı hedefler (örn. `getDeviceListByPolygonSpark` çıktısını girdi olarak alır).  
+Dwell time, güzergah analizi ve motivation analizi için temel oluşturur.
 
 ---
 
@@ -39,8 +26,8 @@ S3'teki ham mobil veriyi (parquet, csv) okuyarak Spark DataFrame döndürür.
 **Modül:** `data`  
 **Açıklama:**  
 MapinData bünyesinde birden fazla mobil veri sağlayıcısı (echo, partner_x vb.) farklı S3  
-prefix'lerinde tutulmaktadır. `loadData` fonksiyonu bu kaynakları birleştirerek standart bir  
-schema'ya normalize edilmiş DataFrame döndürecektir.
+prefix'lerinde tutulmaktadır. `S3Client.loadMobilityData` bu kaynakları birleştirerek standart  
+bir schema'ya normalize edilmiş DataFrame döndürecektir.
 
 ---
 
@@ -58,10 +45,10 @@ S3 yolu veya yerel dosya yolunu kabul eder.
 ## FF-005 — Saatlik Dağılım (`getHourlyDistribution`)
 
 **Modül:** `mobility`  
-**Planlanan metod:** `FootfallEngine.getHourlyDistribution(records, ...) -> dict`  
+**Planlanan metod:** `FootfallEngine.getHourlyDistribution(df, ...) -> dict`  
 **Açıklama:**  
 Filtrelenmiş kayıtları saat bazında gruplandırarak 24 saatlik dağılım tablosu döndürür.  
-Yoğunluk haritaları ve dwell time analizine girdi sağlar.
+Yoğunluk haritaları ve dwell time analizine girdi sağlar. Spark DataFrame kabul eder.
 
 ---
 
@@ -69,6 +56,6 @@ Yoğunluk haritaları ve dwell time analizine girdi sağlar.
 
 Aşağıdaki konular kasıtlı olarak kapsam dışında bırakılmıştır:
 
-- Spark DataFrame entegrasyonu (FootfallEngine şu an saf Python list kabul eder)
 - Gerçek zamanlı (streaming) veri işleme
 - Görselleştirme (`viz` modülü ayrı geliştirme aşamasında)
+

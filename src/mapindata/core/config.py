@@ -145,3 +145,75 @@ class ConfigManager:
     def radiusMeters(self) -> int:
         """Varsayılan Haversine yarıçapı (metre). MAPIN_RADIUS_METERS ile override edilebilir."""
         return int(self._getEnv("MAPIN_RADIUS_METERS", "15"))
+
+    @property
+    def sparkJars(self) -> str:
+        """S3A erişimi için gerekli JAR dosyaları. SPARK_JARS env değişkeninden okunur."""
+        return self._getEnv("SPARK_JARS", "")
+
+    # --- Mobil Veri Spark Konfigürasyonu ---------------------------------
+
+    def mobilitySparkConfig(self, appName: str = "MapinDataMobility") -> dict:
+        """
+        Büyük ölçekli mobil veri işleme için optimize edilmiş Spark konfigürasyon sözlüğü.
+
+        Bellek ve paralellik ayarları ConfigManager'dan dinamik gelir.
+        S3A bağlantı ayarları sabit fakat prod ortamında environment variable ile
+        override edilebilir.
+
+        Kullanım:
+            cfg = ConfigManager()
+            for key, val in cfg.mobilitySparkConfig("FootfallJob").items():
+                builder = builder.config(key, val)
+
+        Returns:
+            dict — SparkSession.builder.config(key, value) çiftleri
+        """
+        config = {
+            # --- Temel ---
+            "spark.app.name": appName,
+            "spark.master": self.sparkMaster,
+            "spark.local.dir": "/var/tmp/spark-local",
+            "spark.sql.warehouse.dir": "/var/tmp/spark-warehouse",
+            # --- S3A Kimlik Doğrulama ---
+            "spark.hadoop.fs.s3a.aws.credentials.provider": (
+                "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
+            ),
+            # --- S3A Bağlantı ---
+            "spark.hadoop.fs.s3a.connection.timeout": "60000",
+            "spark.hadoop.fs.s3a.connection.establish.timeout": "60000",
+            "spark.hadoop.fs.s3a.threads.max": "256",
+            "spark.hadoop.fs.s3a.connection.maximum": "256",
+            # --- S3A Upload / Multipart ---
+            "spark.hadoop.fs.s3a.multipart.size": "134217728",       # 128 MB
+            "spark.hadoop.fs.s3a.multipart.threshold": "268435456",   # 256 MB
+            "spark.hadoop.fs.s3a.block.size": "134217728",
+            "spark.hadoop.fs.s3a.fast.upload": "true",
+            "spark.hadoop.fs.s3a.fast.upload.buffer": "disk",
+            "spark.hadoop.fs.s3a.committer.name": "magic",
+            # --- Bellek ---
+            "spark.driver.memory": self.sparkDriverMemory,
+            "spark.executor.memory": self.sparkExecutorMemory,
+            "spark.driver.maxResultSize": "0",
+            "spark.memory.fraction": "0.9",
+            "spark.memory.storageFraction": "0.3",
+            # --- Paralellik ---
+            "spark.default.parallelism": str(self.sparkDefaultParallelism),
+            "spark.sql.shuffle.partitions": str(self.sparkShufflePartitions),
+            "spark.sql.files.maxPartitionBytes": "134217728",
+            "spark.sql.adaptive.enabled": "true",
+            "spark.sql.adaptive.coalescePartitions.enabled": "true",
+            "spark.sql.adaptive.advisoryPartitionSizeInBytes": "134217728",
+            # --- Serileştirme ---
+            "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
+            "spark.kryoserializer.buffer.max": "1024m",
+            "spark.kryoserializer.buffer": "128m",
+            # --- Parquet / I/O ---
+            "spark.sql.parquet.compression.codec": "snappy",
+            "spark.sql.parquet.filterPushdown": "true",
+            "spark.sql.parquet.mergeSchema": "false",
+        }
+        # JAR dosyaları tanımlıysa ekle
+        if self.sparkJars:
+            config["spark.jars"] = self.sparkJars
+        return config

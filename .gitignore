@@ -48,7 +48,10 @@ logs/
 *.json
 *.pkl
 *.h5
-data/
+# Ham/işlenmiş veri dizinleri — kaynak kodu değil
+/data/
+/output/
+/raw/
 
 # Secrets — asla commit etme
 .env
