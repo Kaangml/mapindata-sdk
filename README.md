@@ -1,132 +1,139 @@
 # MapinData SDK
 
-Mobil sinyal verisi üzerinden ayak izi analizi, persona tespiti, lokasyon skorlaması ve veri toplama için kurumsal Python kütüphanesi.
+Mobil sinyal verisi üzerinden ayak izi analizi ve konum bazlı analitik için kurumsal Python kütüphanesi.
 
 ---
 
 ## İçindekiler
 
 - [Kurulum](#kurulum)
-- [Gizli Bilgiler ve Konfigürasyon](#gizli-bilgiler-ve-konfigürasyon)
+- [S3 ve EC2 Ortamı](#s3-ve-ec2-ortamı)
+- [Konfigürasyon](#konfigürasyon)
 - [Modüller](#modüller)
-  - [core — Temel Katman](#core--temel-katman)
-  - [data — Veri Katmanı](#data--veri-katmanı)
-  - [mobility — Mobil Veri Analitiği](#mobility--mobil-veri-analitiği)
-  - [analytics — İş Mantığı](#analytics--iş-mantığı)
-  - [scraping — Veri Toplama](#scraping--veri-toplama)
-  - [viz — Görselleştirme](#viz--görselleştirme)
 - [Kod Standartları](#kod-standartları)
 - [Test](#test)
-- [Geliştirme](#geliştirme)
+- [Dokümantasyon](#dokümantasyon)
 
 ---
 
 ## Kurulum
 
-### Temel Kurulum (zorunlu bağımlılıklar)
+### GitHub'dan Kurulum (Önerilen)
 
 ```bash
-pip install mapindata-sdk
-```
+# Temel kurulum (core + shapely)
+pip install "git+https://github.com/Kaangml/mapindata-sdk.git"
 
-Temel kurulumda şunlar dahildir: `core`, `analytics`, `viz`
+# S3 okuma + Spark + Footfall Analizi
+pip install "git+https://github.com/Kaangml/mapindata-sdk.git#egg=mapindata-sdk[mobility]"
 
-### Extra Bağımlılıklar
-
-```bash
-# S3, PostgreSQL, Spark
-pip install mapindata-sdk[data]
-
-# Ayak izi, Persona, Journey (data dahil)
-pip install mapindata-sdk[mobility]
-
-# Playwright scraping, Apify, Rocket API
-pip install mapindata-sdk[scraping]
-# Playwright için chromium kurulumu (ilk seferinde):
-playwright install chromium
-
-# Türkçe NLP / Duygu Analizi (BERT)
-pip install mapindata-sdk[nlp]
-
-# Hepsi
-pip install mapindata-sdk[all]
+# Tüm bağımlılıklar
+pip install "git+https://github.com/Kaangml/mapindata-sdk.git#egg=mapindata-sdk[all]"
 ```
 
 ### Geliştirme Ortamı
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/Kaangml/mapindata-sdk.git
 cd mapindata-sdk
 pip install -e ".[all,dev]"
 ```
 
+### Extra Bağımlılık Grupları
+
+| Extra | İçerik | Kurulum |
+|---|---|---|
+| `data` | boto3, pyspark, psycopg2, sqlalchemy, pyarrow | `mapindata-sdk[data]` |
+| `mobility` | data dahil + geopandas, h3 | `mapindata-sdk[mobility]` |
+| `scraping` | playwright, apify-client, aiohttp, httpx | `mapindata-sdk[scraping]` |
+| `nlp` | transformers, torch, langdetect | `mapindata-sdk[nlp]` |
+| `all` | tümü | `mapindata-sdk[all]` |
+| `dev` | pytest, ruff, mypy | `mapindata-sdk[dev]` |
+
 ---
 
-## Gizli Bilgiler ve Konfigürasyon
+## S3 ve EC2 Ortamı
 
-> **Güvenlik Kuralı**: Hiçbir şifre, API anahtarı veya erişim token'ı kaynak koda yazılmaz.
+### AWS AMI Seçimi: Amazon Linux 2023 (Önerilen)
 
-### Gizli Bilgilerin Akışı
+Tüm üretim işleri **Amazon Linux 2023** AMI üzerinde çalışır.
 
+| | Amazon Linux 2023 | Ubuntu |
+|---|---|---|
+| AWS SSM / CloudWatch entegrasyonu | Yerleşik | Manuel |
+| IAM Role otomatik kimlik doğrulama | `DefaultAWSCredentialsProviderChain` ile tam uyumlu | Ek yapılandırma gerekir |
+| Java / PySpark paketi | `dnf install java-17-amazon-corretto` tek komut | Farklı kaynak gerekir |
+| AWS CLI v2 önceden kurulu | Evet | Hayır |
+
+### IAM Role ile S3 Erişimi (.env'de AWS key gerekmez)
+
+EC2 instance'a IAM Role atandığında `DefaultAWSCredentialsProviderChain`
+otomatik olarak role credentials'ını alır. `.env`'e `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` **yazılmaz**.
+
+**Gerekli IAM Policy (instance role'e ekle):**
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::mapindata-raw-data",
+        "arn:aws:s3:::mapindata-raw-data/*"
+      ]
+    }
+  ]
+}
 ```
-Kaynak                     Ortam          Erişim Yolu
-─────────────────────────  ─────────────  ────────────────────────────────
-.env dosyası               Geliştirme     python-dotenv → ConfigManager
-Sistem ortam değişkeni     Üretim / CI    os.getenv()   → ConfigManager
-AWS Secrets Manager        Prod (opsiyonel) ConfigManager override
+
+### S3A JAR Dosyaları (EC2'de tek seferlik kurulum)
+
+```bash
+mkdir -p /home/ec2-user/jars && cd /home/ec2-user/jars
+
+# Hadoop AWS connector
+curl -O https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar
+
+# AWS SDK bundle (hadoop-aws'ın bağımlılığı)
+curl -O https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.528/aws-java-sdk-bundle-1.12.528.jar
 ```
 
-### Kurulum Adımları
+`.env.example` içinde:
+```ini
+SPARK_JARS=/home/ec2-user/jars/hadoop-aws-3.3.4.jar,/home/ec2-user/jars/aws-java-sdk-bundle-1.12.528.jar
+```
 
-**1. Şablon dosyasını kopyala:**
+> **Not:** Amazon Linux 2023 AMI seçildiğinde bu JAR yolları sabittir.
+> Farklı bir AMI veya dizin kullanıyorsan `SPARK_JARS` env değişkenini override et.
+
+---
+
+## Konfigürasyon
+
+> **Güvenlik Kuralı:** Hiçbir şifre, API anahtarı veya erişim token'ı kaynak koda yazılmaz.
 
 ```bash
 cp .env.example .env
+# .env dosyasını doldurun — bu dosya .gitignore'da, asla commit edilmez
 ```
 
-**2. `.env` dosyasını doldur:**
+### Ortam Değişkenleri → ConfigManager
 
-```ini
-# AWS / S3
-AWS_ACCESS_KEY_ID=AKIA...
-AWS_SECRET_ACCESS_KEY=your-secret
-MAPIN_S3_BUCKET=mapindata-prod
-
-# PostgreSQL
-MAPIN_DB_HOST=localhost
-MAPIN_DB_NAME=mapindata
-MAPIN_DB_USER=mapindata_user
-MAPIN_DB_PASSWORD=your-password
-```
-
-**3. `.env` dosyası `.gitignore`'a alınmıştır** — asla commit edilmez.
-
-### Hangi Bilgi Nerede Bulunur?
-
-| Kategori | Ortam Değişkeni | ConfigManager Property |
-|---|---|---|
-| AWS erişim anahtarı | `AWS_ACCESS_KEY_ID` | `config.awsAccessKeyId` |
-| AWS gizli anahtar | `AWS_SECRET_ACCESS_KEY` | `config.awsSecretAccessKey` |
-| S3 bucket adı | `MAPIN_S3_BUCKET` | `config.s3Bucket` |
-| DB host | `MAPIN_DB_HOST` | `config.dbHost` |
-| DB port | `MAPIN_DB_PORT` | `config.dbPort` |
-| DB adı | `MAPIN_DB_NAME` | `config.dbName` |
-| DB kullanıcı | `MAPIN_DB_USER` | `config.dbUser` |
-| DB şifre | `MAPIN_DB_PASSWORD` | `config.dbPassword` |
-| Tüm DB bağlantısı | _(birleşim)_ | `config.dbConnectionString` |
-| Scraper EC2 URL | `MAPIN_SCRAPER_EC2_URL` | `config.scraperEc2Url` |
-| Apify token | `APIFY_API_TOKEN` | `config.apifyToken` |
-| Rocket API key | `ROCKET_API_KEY` | `config.rocketApiKey` |
-
-### Üretim Ortamı
-
-Üretimde `.env` dosyası **kullanılmaz**. Ortam değişkenleri sistem seviyesinde set edilir:
-
-```bash
-# systemd service
-export MAPIN_DB_HOST=prod-db.rds.amazonaws.com
-export MAPIN_DB_PASSWORD=$(aws secretsmanager get-secret-value ...)
-```
+| Kategori | Ortam Değişkeni | ConfigManager Property | Varsayılan |
+|---|---|---|---|
+| S3 bucket | `MAPIN_S3_BUCKET` | `cfg.s3Bucket` | `mapindata-prod` |
+| S3 raw prefix | `MAPIN_S3_RAW_PREFIX` | `cfg.s3RawPrefix` | `raw/` |
+| DB host | `MAPIN_DB_HOST` | `cfg.dbHost` | `localhost` |
+| DB port | `MAPIN_DB_PORT` | `cfg.dbPort` | `5432` |
+| DB adı | `MAPIN_DB_NAME` | `cfg.dbName` | `mapindata` |
+| DB şifre | `MAPIN_DB_PASSWORD` | `cfg.dbPassword` | **zorunlu** |
+| Spark driver bellek | `SPARK_DRIVER_MEMORY` | `cfg.sparkDriverMemory` | sistem RAM × 0.75 |
+| Spark core sayısı | `SPARK_EXECUTOR_CORES` | `cfg.sparkCores` | `cpu_count()` |
+| S3A JAR dosyaları | `SPARK_JARS` | `cfg.sparkJars` | _(boş)_ |
+| Haversine yarıçapı | `MAPIN_RADIUS_METERS` | `cfg.radiusMeters` | `15` |
+| Ortam | `MAPIN_ENV` | `cfg.environment` | `development` |
 
 ---
 
@@ -134,355 +141,152 @@ export MAPIN_DB_PASSWORD=$(aws secretsmanager get-secret-value ...)
 
 ### `core` — Temel Katman
 
-Her kurulumda mevcut. Extra bağımlılık gerektirmez.
+> Tüm kurulumlarda mevcut. Ek bağımlılık gerektirmez.
 
 #### `ConfigManager`
 
 ```python
 from mapindata.core import ConfigManager
 
-config = ConfigManager()
+cfg = ConfigManager()
 
-# Değerlere erişim
-print(config.s3Bucket)           # "mapindata-prod"
-print(config.dbConnectionString) # "postgresql+psycopg2://user:pass@host:5432/db"
-print(config.isProduction)       # False (geliştirme ortamında)
+print(cfg.sparkMaster)        # "local[8]"  (8 çekirdekli sistemde)
+print(cfg.sparkDriverMemory)  # "12g"       (16 GB RAM'li sistemde otomatik)
+print(cfg.s3Bucket)           # "mapindata-prod"
+print(cfg.radiusMeters)       # 15
+
+# Mobil veri Spark konfigürasyonu (S3A + Kryo + AQE dahil)
+for key, val in cfg.mobilitySparkConfig("FootfallJob").items():
+    print(key, "=", val)
 ```
 
-#### `GeoUtils`
+#### `geo_utils`
 
 ```python
-from mapindata.core import haversineDistance, pointInPolygon
+from mapindata.core import haversineDistance, pointInPolygon, boundingBox, centroid
 
 # İki nokta arası mesafe (metre)
-dist = haversineDistance(41.0082, 28.9784, 39.9255, 32.8660)
-print(f"İstanbul-Ankara: {dist/1000:.0f} km")  # ~350 km
+dist = haversineDistance(41.01, 28.97, 39.92, 32.85)
+print(f"İstanbul–Ankara: {dist/1000:.0f} km")  # ~350 km
 
-# Nokta poligon içinde mi?
-polygon = [(28.97, 41.01), (28.98, 41.01), (28.98, 41.02), (28.97, 41.02)]
-inside = pointInPolygon((28.975, 41.015), polygon)
-print(inside)  # True
+# Polygon içinde mi? (GeoJSON: [lon, lat] sırası)
+polygon = [[[28.97, 41.01], [28.98, 41.01], [28.98, 41.02], [28.97, 41.02], [28.97, 41.01]]]
+print(pointInPolygon(41.015, 28.975, polygon))  # True
+
+# Bounding box (ön filtre için)
+coords = [[41.01, 28.97], [41.05, 28.99], [41.03, 29.01]]
+bb = boundingBox(coords)
+# {"minLat": 41.01, "maxLat": 41.05, "minLon": 28.97, "maxLon": 29.01}
 ```
 
-#### `constants`
-
-```python
-from mapindata.core.constants import TURKEY_TZ, MAPIN_COLORS, LOCATION_CATEGORIES
-```
+Fonksiyon detayları: [docs/geo-utils.md](docs/geo-utils.md)
 
 ---
 
 ### `data` — Veri Katmanı
 
-Gereksinim: `pip install mapindata-sdk[data]`
+> Gereksinim: `pip install mapindata-sdk[mobility]`
 
 #### `S3Client`
 
 ```python
+from mapindata.core.config import ConfigManager
 from mapindata.data import S3Client
 
-client = S3Client()
+cfg = ConfigManager()
+client = S3Client(cfg)
 
-# Parquet okuma
-df = client.readParquet("processed/mobility/2024-01/footfall.parquet")
+# Spark oturumu oluştur (mobilitySparkConfig otomatik uygulanır)
+spark = client.createSession("FootfallJob")
 
-# Filtrelenmiş okuma
-df = client.readParquet(
-    "processed/mobility/2024-01/footfall.parquet",
-    columns=["device_id", "lat", "lon"],
-    filters=[("city", "=", "Istanbul")],
-)
+# İstanbul mobil verisini yükle (echo_data_partitioned şeması)
+df = client.loadMobilityData(province="Istanbul")
+#  → device_aid, latitude, longitude, timestamp, horizontal_accuracy sütunları
 
-# Parquet yazma
-client.writeParquet(df, "processed/results/scores.parquet")
+# Tüm iller (dikkat: çok büyük veri!)
+df_all = client.loadMobilityData()
 
-# Partition ile yazma
-client.writeParquet(df, "processed/results/", partitionCols=["year", "month"])
-```
+# Özel S3 yolu
+df_custom = client.loadData("s3a://mapindata-raw-data/custom/path/", format="parquet")
 
-#### `SparkManager`
-
-```python
-from mapindata.data import SparkManager
-
-# Sistem kaynaklarına göre otomatik konfigürasyon
-spark = SparkManager(appName="FootfallAnalysis").getSparkSession()
-df = spark.read.parquet("s3a://mapindata-prod/raw/mobility/")
-
-# Üretim ortamında .env ile override:
-# SPARK_DRIVER_MEMORY=64g
-# SPARK_EXECUTOR_CORES=8
-```
-
-#### `DBConnector`
-
-```python
-from mapindata.data import DBConnector
-
-db = DBConnector()
-
-# Sorgu çalıştırma (parametreli — SQL injection güvenli)
-df = db.readQuery(
-    "SELECT * FROM locations WHERE city = :city AND category = :cat",
-    params={"city": "Istanbul", "cat": "bar"},
-)
-
-# Tablo okuma
-df = db.readTable("public.poi_master", columns=["id", "name", "lat", "lon"])
-
-# DataFrame yazma
-db.writeDataFrame(results_df, "staging_footfall", ifExists="replace")
+# Oturumu kapat
+client.stop()
 ```
 
 ---
 
 ### `mobility` — Mobil Veri Analitiği
 
-Gereksinim: `pip install mapindata-sdk[mobility]`
+> Gereksinim: `pip install mapindata-sdk[mobility]`
 
 #### `FootfallEngine`
+
+İki çalışma modu vardır:
+
+| Mod | Girdi | Ne zaman kullanılır |
+|---|---|---|
+| **Pure Python** | `list[dict]` | Küçük/test verisi, Spark gereksiz |
+| **Spark** | `pyspark.sql.DataFrame` | S3'ten okunan gerçek büyük veri |
 
 ```python
 from mapindata.mobility import FootfallEngine
 
-engine = FootfallEngine()
+engine = FootfallEngine()  # latCol, lonCol, deviceCol özelleştirilebilir
 
-# Poligon bazlı sayım
-polygons = [
-    {"id": "POI_001", "coords": [(28.97, 41.01), (28.98, 41.01), ...]},
-    {"id": "POI_002", "coords": [(29.01, 41.05), ...]},
+# ── Pure Python Modu ──────────────────────────────────────────────────
+records = [
+    {"device_aid": "d001", "latitude": 41.033, "longitude": 28.978},
+    {"device_aid": "d002", "latitude": 41.034, "longitude": 28.979},
 ]
-result = engine.calculateByPolygon(gps_df, polygons)
-# polygon_id  total_pings  unique_visitors
-# POI_001     1250         430
-# POI_002     870          295
 
-# Radius bazlı sayım
-result = engine.calculateByRadius(
-    points=gps_df,
-    center=(41.015, 28.975),
-    radius=500,  # metre
-)
-# {"total_pings": 340, "unique_visitors": 120}
+polygon = [[[28.97, 41.03], [28.99, 41.03], [28.99, 41.04], [28.97, 41.04], [28.97, 41.03]]]
+
+count   = engine.getCountByPolygon(records, polygon)        # int
+devices = engine.getDeviceListByPolygon(records, polygon)   # list[str]
+
+count   = engine.getCountByRadius(records, 41.033, 28.978, 50)       # int, 50m yarıçap
+devices = engine.getDeviceListByRadius(records, 41.033, 28.978, 50)  # list[str]
+
+# ── Spark Modu (S3 verisi için) ───────────────────────────────────────
+from mapindata.data import S3Client
+
+client = S3Client(cfg)
+spark  = client.createSession("FootfallJob")
+df     = client.loadMobilityData(province="Istanbul")
+
+count      = engine.getCountByPolygonSpark(df, polygon)           # int
+devices_df = engine.getDeviceListByPolygonSpark(df, polygon)      # DataFrame
+devices_df.write.parquet("/output/devices/")
+
+count      = engine.getCountByRadiusSpark(df, 41.033, 28.978, 50)
+devices_df = engine.getDeviceListByRadiusSpark(df, 41.033, 28.978, 50)
+
+client.stop()
 ```
 
-#### `PersonaManager`
-
-```python
-from mapindata.mobility import PersonaManager
-
-manager = PersonaManager(nightStart=23, dayStart=8)
-personas = manager.identifyHomeWork(mobility_df)
-# device_id   home_lat  home_lon  work_lat  work_lon
-# abc123      41.023    29.001    41.045    28.987
-```
-
-#### `JourneyAnalyzer`
-
-```python
-from mapindata.mobility import JourneyAnalyzer
-
-analyzer = JourneyAnalyzer()
-
-# Sadakat: Bar A'ya gidenler Bar B'ye de gidiyor mu?
-loyalty = analyzer.calculateLoyalty(visits_df, poiA="BAR_001", poiB="BAR_002")
-# {"loyalty_a_to_b": 0.32, "loyalty_b_to_a": 0.28, "shared_visitors": 145}
-
-# Örtüşme: iki rakip grup arasında ortak kitle
-overlap = analyzer.calculateOverlap(visits_df, groupA=["BRAND_A_*"], groupB=["BRAND_B_*"])
-# {"overlap_score": 0.41, "intersection": 2300, "union": 5600}
-```
-
----
-
-### `analytics` — İş Mantığı
-
-Temel kurulumda dahil. Extra gerektirmez.
-
-#### `LitreEstimator`
-
-```python
-from mapindata.analytics import LitreEstimator
-
-estimator = LitreEstimator(capacityWeight=0.4, densityWeight=0.6)
-
-# Tek lokasyon
-monthly_litres = estimator.estimateHybrid(
-    capacity=80,        # 80 kişilik bar
-    category="bar",
-    densityScore=72.5,  # FootfallEngine'den gelen skor
-)
-print(f"Aylık tahmini: {monthly_litres:.0f} litre")
-
-# Toplu tahmin
-locations = [
-    {"id": "L001", "capacity": 60, "category": "restoran", "density_score": 65.0},
-    {"id": "L002", "capacity": 120, "category": "bar", "density_score": 88.0},
-]
-results = estimator.estimateBatch(locations)
-```
-
-#### `Scorer`
-
-```python
-from mapindata.analytics import Scorer
-
-scorer = Scorer()
-
-# Tek skor dönüştürme
-profile = scorer.calculateProfileScore(rawScore=75.0)   # "B"
-population = scorer.calculatePopulationScore(62.0)      # 4
-
-# Bileşen bazlı detaylı skor
-detail = scorer.calculateProfileScoreDetailed(
-    demographicScore=78.0,
-    incomeScore=82.0,
-    affinityScore=65.0,
-)
-# {"raw_score": 76.35, "band": "B", "components": {...}}
-
-# DataFrame'e bant sütunu ekleme
-scored_df = scorer.scoreDataFrame(df)
-# profile_band ve population_band sütunları eklenir
-```
-
-#### `NlpEngine`
-
-```python
-from mapindata.analytics import NlpEngine
-
-# Hızlı kural modu (ek paket gerekmez)
-engine = NlpEngine(useTransformer=False)
-
-# Türkçe BERT modu (pip install mapindata-sdk[nlp])
-engine = NlpEngine(useTransformer=True)
-
-# Tek yorum analizi
-result = engine.analyzeSentiment("Harika bir mekan, kesinlikle tavsiye ederim!")
-# {"label": "positive", "score": 0.92, "clean_text": "harika bir mekan..."}
-
-# Toplu analiz
-results = engine.analyzeReviews(["Çok güzel!", "Berbat servis.", "İdare eder."])
-
-# Sadece metin temizleme
-clean = engine.cleanText("Müthiş 🍕 mekan!! https://maps.google.com/...")
-```
-
----
-
-### `scraping` — Veri Toplama
-
-Gereksinim: `pip install mapindata-sdk[scraping]`
-
-#### `ScraperClient` (Async)
-
-```python
-import asyncio
-from mapindata.scraping import ScraperClient
-
-async def main():
-    async with ScraperClient() as client:
-        # Google Places arama
-        places = await client.scrapeGooglePlaces(
-            query="bar istanbul beyoğlu",
-            maxResults=20,
-        )
-
-        # Belirli bir yer için yorumlar
-        reviews = await client.scrapeGoogleReviews(
-            placeId="ChIJxxxxxxxx",
-            maxReviews=100,
-            sortBy="newest",
-        )
-
-asyncio.run(main())
-
-# Senkron kullanım (Jupyter için)
-client = ScraperClient()
-places = client.scrapeGooglePlacesSync("kafe taksim")
-```
-
-#### `ApifyClient`
-
-```python
-from mapindata.scraping import ApifyClient
-
-apify = ApifyClient()
-results = apify.runActor(
-    actorId="apify/google-maps-scraper",
-    runInput={"searchStringsArray": ["bar istanbul"], "maxCrawledPlaces": 50},
-)
-```
-
-#### `RocketApiClient`
-
-```python
-from mapindata.scraping import RocketApiClient
-
-rocket = RocketApiClient()
-places = rocket.searchPlaces(query="restoran kadıköy", maxResults=30)
-details = rocket.getPlaceDetails(placeId="rocket_place_id")
-```
-
----
-
-### `viz` — Görselleştirme
-
-Temel kurulumda dahil.
-
-```python
-from mapindata.viz import applyMapinTheme, mapinFigure, mapinBarChart, getMapinColorPalette
-import matplotlib.pyplot as plt
-
-# Tema uygula (tüm grafikler otomatik olarak MapinData görünümüne geçer)
-applyMapinTheme()
-
-# Önceden ayarlanmış figür
-fig, ax = mapinFigure("Aylık Ayak İzi", "Ay", "Ziyaretçi Sayısı")
-ax.plot(months, visitors)
-plt.show()
-
-# Hazır bar grafiği
-fig, ax = mapinBarChart(
-    labels=["Ocak", "Şubat", "Mart"],
-    values=[1200, 1450, 1380],
-    title="Çeyrek Ziyaretçi",
-    colorIndex=1,  # MAPIN_COLORS[1] = mavi
-)
-
-# Renk paleti
-colors = getMapinColorPalette(n=5)  # ["#1A3C5E", "#2E86AB", ...]
-```
+> **GeoJSON Koordinat Sırası:** `polygonCoords` her zaman `[lon, lat]` sırasındadır.
 
 ---
 
 ## Kod Standartları
 
-SDK, [MAPINDATA_KODLAMA_STANDARDLARI.docx](docs/MAPINDATA_KODLAMA_STANDARDLARI.docx) belgesindeki kurallara uyar:
+Tüm kurallar: [docs/kodlama-standartlari.md](docs/kodlama-standartlari.md)
 
 | Öğe | Kural | Örnek |
 |---|---|---|
-| Sınıf | PascalCase | `FootfallEngine`, `ConfigManager` |
-| Fonksiyon | camelCase | `haversineDistance`, `calculateByPolygon` |
-| Değişken | camelCase | `densityScore`, `totalPings` |
-| Sabit | UPPER_SNAKE_CASE | `TURKEY_TZ`, `MAPIN_COLORS` |
-| Private | `_` prefix | `_buildResourceProfile` |
-| Dosya | snake_case | `footfall_engine.py`, `db_connector.py` |
+| Sınıf | PascalCase | `FootfallEngine`, `ConfigManager`, `S3Client` |
+| Fonksiyon / Metod | camelCase | `haversineDistance`, `getCountByPolygon` |
+| Değişken | camelCase | `centerLat`, `radiusMeters` |
+| Sabit | UPPER_SNAKE_CASE | `MOBILITY_DEFAULT_COLUMNS` |
+| Private | `_` prefix | `_filterByPolygon`, `_makePolygonUdf` |
 
-### Ruff ile Linting
+### Ruff
 
 ```bash
-# Lint kontrolü
-ruff check src/
-
-# Otomatik düzeltme
-ruff check --fix src/
-
-# Kod formatlama
-ruff format src/
+ruff check src/          # lint kontrol
+ruff check --fix src/    # otomatik düzeltme
+ruff format src/         # formatlama
 ```
-
-Ruff konfigürasyonu `pyproject.toml` içindedir. `N802/N803/N806` kuralları camelCase standardıyla çeliştiği için devre dışıdır.
 
 ---
 
@@ -492,64 +296,38 @@ Ruff konfigürasyonu `pyproject.toml` içindedir. `N802/N803/N806` kuralları ca
 # Tüm testler
 pytest
 
-# Kapsam raporu ile
-pytest --cov=src/mapindata --cov-report=html
+# Kapsam raporu
+pytest --cov=src/mapindata --cov-report=term-missing
 
-# Sadece core testleri
-pytest tests/core/
-
-# Sadece analytics testleri
-pytest tests/analytics/ -v
+# Modül bazlı
+pytest tests/core/ -v
+pytest tests/mobility/ -v
+pytest tests/data/ -v
 ```
 
-### Test Yapısı
+### Test Durumu
 
-```
-tests/
-├── core/
-│   ├── test_geo_utils.py    # haversineDistance, pointInPolygon
-│   └── test_config.py       # ConfigManager defaults ve overrides
-├── analytics/
-│   ├── test_litre_estimator.py
-│   └── test_scorer.py
-└── mobility/
-    └── test_footfall_engine.py
-```
+| Modül | Durum |
+|---|---|
+| `core.config` | ✅ Testler geçiyor |
+| `core.geo_utils` | ✅ Testler geçiyor |
+| `mobility.footfall_engine` | ✅ Pure Python testler geçiyor |
+| `data.s3_client` | ✅ Config testleri geçiyor; S3 testleri entegrasyon ortamı gerektirir |
+| `analytics`, `scraping`, `viz` | ⏳ Henüz implement edilmedi |
 
 ---
 
-## Geliştirme
+## Dokümantasyon
 
-### Mimari Kararlar (ADR)
-
-Tasarım kararları `docs/adr/` klasöründe kayıt altına alınmıştır:
-
-| ADR | Başlık |
-|-----|--------|
-| [ADR-001](docs/adr/ADR-001-polygon-vs-haversine.md) | Poligon Sayımı vs. Haversine — hangi durumda hangisi? |
-| [ADR-002](docs/adr/ADR-002-dynamic-spark-config.md) | Dinamik Spark Konfigürasyonu — 48 Core Bağımlılığını Kırma |
-
-### Yeni Modül Ekleme
-
-1. `src/mapindata/<modül>/` klasörünü oluştur
-2. `__init__.py` içinde public API'yi tanımla
-3. `tests/<modül>/` klasörünü ve testleri oluştur
-4. `pyproject.toml` içine gerekirse yeni extra ekle
-5. Bu README'yi güncelle
-
-### GitHub'a Yükleme
-
-```bash
-# İlk commit
-git init
-git add .
-git commit -m "feat: initial SDK structure"
-git remote add origin https://github.com/MapinData/mapindata-sdk.git
-git push -u origin main
-```
+| Dosya | İçerik |
+|---|---|
+| [docs/geo-utils.md](docs/geo-utils.md) | `haversineDistance`, `pointInPolygon`, `boundingBox`, `centroid` fonksiyon referansı |
+| [docs/development-history.md](docs/development-history.md) | Her eklenen sınıf/metod kronolojik tablo |
+| [docs/future-features.md](docs/future-features.md) | Planlanmış özellikler (FF-001, FF-003...) |
+| [docs/kodlama-standartlari.md](docs/kodlama-standartlari.md) | MapinData kodlama kuralları |
 
 ---
 
 ## Lisans
 
-Proprietary — MapinData © 2024
+Proprietary — MapinData © 2026

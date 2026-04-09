@@ -117,3 +117,50 @@ Koordinat listesinin aritmetik merkezini hesaplar.
 | Hızlı ön filtresi | Bounding Box → ardından Polygon |
 
 Daha fazla bilgi için bkz. [kodlama-standartlari.md](kodlama-standartlari.md)
+
+---
+
+## S3Client ile Büyük Veri Akışı
+
+S3'ten okunan mobil veri `FootfallEngine`'in Spark metodlarıyla birleştirilerek
+tam analiz yapılır. Tipik iş akışı:
+
+```
+S3Client.loadMobilityData()          → Spark DataFrame
+  └─▶ boundingBox()                  → ön filtre koordinatları
+        └─▶ FootfallEngine.*Spark()  → polygon / radius filtresi
+              └─▶ unique device sayısı veya DataFrame
+```
+
+```python
+from mapindata.core.config import ConfigManager
+from mapindata.core.geo_utils import boundingBox
+from mapindata.data.s3_client import S3Client
+from mapindata.mobility.footfall_engine import FootfallEngine
+
+cfg = ConfigManager()
+client = S3Client(cfg)
+spark = client.createSession("FootfallJob")
+
+# 1. Veriyi yükle
+df = client.loadMobilityData(province="Istanbul")
+
+# 2. Polygon listenden bounding box hesapla → ön filtre
+coords = [[41.03, 28.97], [41.07, 28.97], [41.07, 29.01], [41.03, 29.01]]
+bb = boundingBox(coords)
+df = df.filter(
+    (df.latitude  >= bb["minLat"]) & (df.latitude  <= bb["maxLat"]) &
+    (df.longitude >= bb["minLon"]) & (df.longitude <= bb["maxLon"])
+).cache()
+
+# 3. Footfall hesapla
+engine = FootfallEngine()
+polygon = [[[28.97, 41.03], [29.01, 41.03], [29.01, 41.07], [28.97, 41.07], [28.97, 41.03]]]
+count = engine.getCountByPolygonSpark(df, polygon)
+print(f"Footfall: {count:,} unique device")
+
+client.stop()
+```
+
+Spark konfigürasyonu için bkz. [S3 ve EC2 Ortamı](../README.md#s3-ve-ec2-ortamı)
+
