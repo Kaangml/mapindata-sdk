@@ -36,3 +36,31 @@ class TestConfigManagerRequiredFields:
         assert "testpass" in cs
         os.environ.pop("MAPIN_DB_PASSWORD", None)
 
+
+class TestConfigManagerProvince:
+    def test_default_test_province_is_istanbul(self):
+        os.environ.pop("MAPIN_TEST_PROVINCE", None)
+        cfg = ConfigManager()
+        assert cfg.testProvince == "istanbul"
+
+    def test_test_province_env_override(self):
+        os.environ["MAPIN_TEST_PROVINCE"] = "ankara"
+        cfg = ConfigManager()
+        assert cfg.testProvince == "ankara"
+        os.environ.pop("MAPIN_TEST_PROVINCE", None)
+
+    def test_mobility_data_path_istanbul(self):
+        cfg = ConfigManager()
+        path = cfg.mobilityDataPath("istanbul")
+        assert path == "s3a://mapindata-athena/results/bench_spatial/istanbul/v2_h3_alt_dev_sorted/"
+
+    def test_mobility_data_path_lowercases_province(self):
+        cfg = ConfigManager()
+        assert cfg.mobilityDataPath("Istanbul") == cfg.mobilityDataPath("istanbul")
+
+    def test_mobility_data_path_ankara(self):
+        cfg = ConfigManager()
+        path = cfg.mobilityDataPath("ankara")
+        assert "ankara" in path
+        assert path.startswith("s3a://")
+

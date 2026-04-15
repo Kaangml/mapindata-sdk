@@ -99,6 +99,137 @@ def boundingBox(coords: list[list[float]]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Polygon Alan Hesabı
+# ---------------------------------------------------------------------------
+
+
+def polygonAreaM2(polygonCoords: list) -> float:
+    """
+    GeoJSON Polygon koordinatlarından yüzey alanını metre² cinsinden hesaplar.
+
+    Shapely'nin derece cinsinden alanını enlem/boylam ölçek faktörleriyle metre²'ye
+    dönüştürür. Yüksek enlemlerde küçük sapmalar olabilir; polygon sınıf ayrımı
+    (küçük / büyük) için yeterince doğrudur.
+
+    Args:
+        polygonCoords: GeoJSON Polygon coordinates dizisi [ [[lon, lat], ...] ]
+
+    Returns:
+        Yaklaşık alan (metre²). Shapely kurulu değilse 0.0 döner.
+    """
+    try:
+        from shapely.geometry import shape  # noqa: PLC0415
+
+        polygon = shape({"type": "Polygon", "coordinates": polygonCoords})
+        centroid = polygon.centroid
+        latRad = math.radians(centroid.y)
+        mPerDegLat = 111_320.0
+        mPerDegLon = 111_320.0 * math.cos(latRad)
+        return abs(polygon.area) * mPerDegLat * mPerDegLon
+    except Exception:
+        return 0.0
+
+
+# ---------------------------------------------------------------------------
+# H3 Yardımcıları
+# ---------------------------------------------------------------------------
+# h3 opsiyonel bağımlılıktır.
+# Kurulum: pip install mapindata-sdk[mobility]
+# ---------------------------------------------------------------------------
+
+
+def h3CentroidCell(lat: float, lon: float, res: int = 9) -> int:
+    """
+    Verilen koordinatın H3 hücresini 64-bit tam sayı olarak döndürür.
+
+    Parquet dosyalarında h3_res9_id INT64 olarak saklandığından bu çıktı
+    doğrudan Spark filter ifadelerinde kullanılabilir.
+
+    Args:
+        lat: Enlem
+        lon: Boylam
+        res: H3 çözünürlük (varsayılan 9)
+
+    Returns:
+        H3 hücre indeksi (int64).
+
+    Raises:
+        ImportError: h3 kurulu değilse
+    """
+    import h3  # noqa: PLC0415
+
+    return h3.str_to_int(h3.latlng_to_cell(lat, lon, res))
+
+
+def h3PolygonCells(polygonCoords: list, res: int = 9, bufferK: int = 1) -> list:
+    """
+    GeoJSON Polygon için H3 hücrelerini INT64 listesi olarak döndürür.
+
+    Önce polyfill uygular; ardından sınır hücrelerine kring(bufferK) tamponu ekler.
+    Büyük / orta polygonlar (alan ≥ 100 000 m²) için uygundur.
+
+    Polyfill sonucu boşsa (küçük polygon, < 1 H3 hücresi) boş liste döner —
+    bu durumda h3CentroidCell + grid_disk kullanın.
+
+    Args:
+        polygonCoords: GeoJSON Polygon coordinates [ [[lon, lat], ...] ]
+        res          : H3 çözünürlük (varsayılan 9)
+        bufferK      : Kenar tamponu halka sayısı (varsayılan 1)
+
+    Returns:
+        H3 hücre INT64 listesi.
+
+    Raises:
+        ImportError: h3 kurulu değilse
+    """
+    import h3  # noqa: PLC0415
+
+    # GeoJSON [lon, lat] → h3 LatLngPoly [lat, lon]
+    outerRing = [(c[1], c[0]) for c in polygonCoords[0]]
+    holeRings = [[(c[1], c[0]) for c in ring] for ring in polygonCoords[1:]]
+
+    poly = h3.LatLngPoly(outerRing, *holeRings)
+    coreCells = set(h3.h3shape_to_cells(poly, res))
+
+    if not coreCells or bufferK == 0:
+        return [h3.str_to_int(c) for c in coreCells]
+
+    # Sınır hücrelerine kring tamponu ekle
+    buffered = set(coreCells)
+    for cell in coreCells:
+        buffered.update(h3.grid_disk(cell, bufferK))
+
+    return [h3.str_to_int(c) for c in buffered]
+
+
+def autoKringK(polygonCoords: list, res: int = 9) -> int:
+    """
+    Polygon boyutuna göre H3 kring yarıçapını otomatik seçer.
+
+    Karar kriteri: en kısa polygon kenarı H3 res9 hücre çapından (≈ 174 m) büyükse
+    k=0 (sadece centroid cell), değilse k=1 (1 halka çevre hücreler).
+
+    Args:
+        polygonCoords: GeoJSON Polygon coordinates [ [[lon, lat], ...] ]
+        res          : H3 çözünürlük (şu an sadece res=9 desteklenir)
+
+    Returns:
+        0 veya 1 (int)
+    """
+    H3_RES9_DIAMETER_M = 174.0  # yaklaşık H3 res9 hücre çapı (kenar ≈ 87 m)
+    ring = polygonCoords[0]
+    n = len(ring)
+    minEdge = float("inf")
+    for i in range(n - 1):
+        lon1, lat1 = ring[i]
+        lon2, lat2 = ring[i + 1]
+        d = haversineDistance(lat1, lon1, lat2, lon2)
+        if d < minEdge:
+            minEdge = d
+    return 0 if minEdge >= H3_RES9_DIAMETER_M else 1
+
+
+# ---------------------------------------------------------------------------
 # Centroid
 # ---------------------------------------------------------------------------
 

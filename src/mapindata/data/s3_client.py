@@ -5,16 +5,28 @@
 #          İki bağlantı modu: IAM Role (EC2) veya Access Key (env).
 
 import os
+import sys
 
 from mapindata.core.config import ConfigManager
 
-# Mobil veri standart sütunları (echo schema)
+# Mobil veri standart sütunları (echo schema — ham veri)
 MOBILITY_DEFAULT_COLUMNS = [
     "timestamp",
     "device_aid",
     "latitude",
     "longitude",
     "horizontal_accuracy",
+]
+
+# V2 H3 zenginleştirilmiş temiz veri sütunları
+MOBILITY_CLEAN_COLUMNS = [
+    "timestamp",
+    "device_aid",
+    "latitude",
+    "longitude",
+    "horizontal_accuracy",
+    "neighborhood",
+    "h3_res9_id",
 ]
 
 
@@ -63,6 +75,11 @@ class S3Client:
                 "PySpark gereklidir. Kurulum: pip install mapindata-sdk[mobility]"
             ) from e
 
+        # Python worker/driver sürümü eşleşmesi — worker mismatch hatasını önler
+        # (EC2'de python3.9 varsayılan, python3.11 çalıştırılıyorsa bu zorunlu)
+        os.environ["PYSPARK_PYTHON"] = sys.executable
+        os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
+
         # Ortam değişkenlerini Spark başlamadan önce ayarla
         os.environ.setdefault("SPARK_LOCAL_DIRS", "/var/tmp/spark-local")
         os.environ["_JAVA_OPTIONS"] = (
@@ -76,13 +93,6 @@ class S3Client:
                 builder = builder.config(key, val)
 
         self._spark = builder.getOrCreate()
-
-        # S3A bağlantı multipart ayarlarını Hadoop config üzerinden de set et
-        hc = self._spark._jsc.hadoopConfiguration()
-        hc.set("fs.s3a.connection.timeout", "60000")
-        hc.set("fs.s3a.connection.establish.timeout", "60000")
-        hc.set("fs.s3a.multipart.size", "268435456")
-        hc.set("fs.s3a.multipart.threshold", "536870912")
 
         return self._spark
 
@@ -168,6 +178,31 @@ class S3Client:
             basePath=f"{tableRoot}/",
             columns=columns or MOBILITY_DEFAULT_COLUMNS,
         )
+
+    def loadCleanMobilityData(
+        self,
+        province: str,
+        columns: list[str] | None = None,
+    ):
+        """
+        MapinData V2 H3 zenginleştirilmiş temiz veri yükler.
+
+        V2 veri seti: repartitionByRange(h3_res9_id, device_aid) ile S3'e yazılmış;
+        h3_res9_id üzerinde Parquet row-group skip, footfall sorgularını ~14×
+        hızlandırır. FootfallEngine Spark metodlarının önerilen girdi kaynağıdır.
+
+        Desteklenen iller: istanbul, ankara (ConfigManager.mobilityDataPath ile)
+
+        Args:
+            province: İl adı (örn. "Istanbul", “istanbul”)
+            columns : Okunacak sütun listesi. None → MOBILITY_CLEAN_COLUMNS
+                      (timestamp, device_aid, lat, lon, hacc, neighborhood, h3_res9_id)
+
+        Returns:
+            pyspark.sql.DataFrame — V2 H3 sıralanmış temiz mobil veri
+        """
+        path = self._config.mobilityDataPath(province)
+        return self.loadData(path, columns=columns or MOBILITY_CLEAN_COLUMNS)
 
     # ------------------------------------------------------------------
     # Temizlik

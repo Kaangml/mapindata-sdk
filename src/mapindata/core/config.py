@@ -185,9 +185,9 @@ class ConfigManager:
             "spark.hadoop.fs.s3a.threads.max": "256",
             "spark.hadoop.fs.s3a.connection.maximum": "256",
             # --- S3A Upload / Multipart ---
-            "spark.hadoop.fs.s3a.multipart.size": "134217728",       # 128 MB
-            "spark.hadoop.fs.s3a.multipart.threshold": "268435456",   # 256 MB
-            "spark.hadoop.fs.s3a.block.size": "134217728",
+            "spark.hadoop.fs.s3a.multipart.size": "268435456",       # 256 MB
+            "spark.hadoop.fs.s3a.multipart.threshold": "536870912",   # 512 MB
+            "spark.hadoop.fs.s3a.block.size": "268435456",
             "spark.hadoop.fs.s3a.fast.upload": "true",
             "spark.hadoop.fs.s3a.fast.upload.buffer": "disk",
             "spark.hadoop.fs.s3a.committer.name": "magic",
@@ -200,10 +200,12 @@ class ConfigManager:
             # --- Paralellik ---
             "spark.default.parallelism": str(self.sparkDefaultParallelism),
             "spark.sql.shuffle.partitions": str(self.sparkShufflePartitions),
-            "spark.sql.files.maxPartitionBytes": "134217728",
+            "spark.sql.files.maxPartitionBytes": "268435456",
             "spark.sql.adaptive.enabled": "true",
             "spark.sql.adaptive.coalescePartitions.enabled": "true",
-            "spark.sql.adaptive.advisoryPartitionSizeInBytes": "134217728",
+            "spark.sql.adaptive.advisoryPartitionSizeInBytes": "268435456",
+            # --- Python Worker ---
+            "spark.python.worker.reuse": "true",
             # --- Serileştirme ---
             "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
             "spark.kryoserializer.buffer.max": "1024m",
@@ -217,3 +219,37 @@ class ConfigManager:
         if self.sparkJars:
             config["spark.jars"] = self.sparkJars
         return config
+
+    # --- Mobil Veri Yol Yapılandırması ------------------------------------
+
+    def mobilityDataPath(self, province: str) -> str:
+        """
+        Verilen il için V2 H3 zenginleştirilmiş Parquet veri yolunu döndürür.
+
+        Suffix MAPIN_MOBILITY_DATA_SUFFIX env var ile override edilebilir.
+        Varsayılan suffix il bazlı:
+          - istanbul → v2_h3_alt_dev_sorted  (alt=altitude 200m filter, repartitionByRange)
+          - diğerleri → v2_h3_dev_sorted
+
+        Args:
+            province: İl adı (büyük/küçük harf duyarsız, örn. "Istanbul" → "istanbul")
+
+        Returns:
+            S3A uyumlu tam yol (str)
+        """
+        suffix = self._getEnv("MAPIN_MOBILITY_DATA_SUFFIX", "")
+        if not suffix:
+            suffix = (
+                "v2_h3_alt_dev_sorted"
+                if province.lower() == "istanbul"
+                else "v2_h3_dev_sorted"
+            )
+        return (
+            f"s3a://mapindata-athena/results/bench_spatial/"
+            f"{province.lower()}/{suffix}/"
+        )
+
+    @property
+    def testProvince(self) -> str:
+        """Test ve geliştirme için varsayılan il. MAPIN_TEST_PROVINCE ile override edilebilir."""
+        return self._getEnv("MAPIN_TEST_PROVINCE", "istanbul")
