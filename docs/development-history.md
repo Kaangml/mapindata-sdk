@@ -23,6 +23,19 @@ SDK genelinde eklenen her sınıf, fonksiyon ve önemli yapısal değişiklik bu
 | 2026-04-09 | `data.s3_client` | `S3Client.createSession` | Metod | mobilitySparkConfig ile optimize edilmiş Spark oturumu oluşturur; S3A multipart ayarlarını Hadoop config'e de uygular. |
 | 2026-04-09 | `data.s3_client` | `S3Client.loadData` | Metod | S3'teki herhangi bir parquet/csv dosyasını Spark DataFrame olarak okur. basePath ile partition tabanlı tablo desteği sağlar. |
 | 2026-04-09 | `data.s3_client` | `S3Client.loadMobilityData` | Metod | MapinData standart echo_data_partitioned şemasından mobil veri yükler. Province bazlı partition filter ve varsayılan sütun seçimi içerir. |
+| 2026-04-15 | `data.s3_client` | `S3Client.loadCleanMobilityData` | Metod | V2 H3 zenginleştirilmiş temiz veri yükler. `mobilityDataPath` üzerinden il bazlı S3 yolunu çözer; `MOBILITY_CLEAN_COLUMNS` varsayılan şemasını kullanır. FootfallEngine Spark metodlarının önerilen girdi kaynağı. |
+| 2026-04-15 | `data.s3_client` | `MOBILITY_CLEAN_COLUMNS` | Sabit | V2 H3 veri setinin standart sütun listesi: `[timestamp, device_aid, latitude, longitude, horizontal_accuracy, neighborhood, h3_res9_id]` |
+| 2026-04-15 | `data.s3_client` | `S3Client.createSession` (güncellendi) | Metod | `PYSPARK_PYTHON` ve `PYSPARK_DRIVER_PYTHON` ortam değişkenleri `sys.executable` olarak ayarlandı. Python 3.11 uyumsuzluk hatası önlendi. |
+| 2026-04-15 | `core.config` | `ConfigManager.mobilityDataPath` | Metod | İl bazlı V2 H3 Parquet yolunu döndürür. İstanbul → `v2_h3_alt_dev_sorted` (200 m altitude filtreli), diğerleri → `v2_h3_dev_sorted`. `MAPIN_MOBILITY_DATA_SUFFIX` env override desteği. |
+| 2026-04-15 | `core.config` | `ConfigManager.mobilitySparkConfig` (güncellendi) | Metod | Multipart boyutları 256 MB / 512 MB olarak güncellendi. `python.worker.reuse=true` ve `maxPartitionBytes=256MB` eklendi. |
+| 2026-04-15 | `core.config` | `ConfigManager.testProvince` | Özellik | Test ve geliştirme ortamı için varsayılan il. `MAPIN_TEST_PROVINCE` env ile override edilebilir; varsayılan `istanbul`. |
+| 2026-04-15 | `core.geo_utils` | `polygonAreaM2` | Fonksiyon | GeoJSON polygon alanını metre kare cinsinden hesaplar. Shoelace (Gauss) formülü + derece→metre dönüşümü. Küçük polygon eşik kararında kullanılır (< 100 000 m² → kring bazlı). |
+| 2026-04-15 | `core.geo_utils` | `h3CentroidCell` | Fonksiyon | Koordinatın H3 hücresini INT64 olarak döndürür. Parquet `h3_res9_id` sütunuyla doğrudan karşılaştırılabilir. |
+| 2026-04-15 | `core.geo_utils` | `h3PolygonCells` | Fonksiyon | GeoJSON polygon için H3 INT64 hücre listesi döndürür. `h3shape_to_cells` polyfill + `grid_disk(bufferK)` tampon. Büyük polygon H3 ön-filtresi için kullanılır. |
+| 2026-04-15 | `core.geo_utils` | `autoKringK` | Fonksiyon | Polygon kenar uzunluğuna göre kring k değerini (`0` veya `1`) otomatik seçer. Küçük polygon → k=1, büyük polygon → k=0. H3 res9 çap eşiği ≈ 174 m. |
+| 2026-04-15 | `mobility.footfall_engine` | `FootfallEngine._filterByPolygonSpark` (güncellendi) | Metod | 3-katmanlı pipeline: BBox ön-filtre → H3 hücre ön-filtre (`h3PolygonCells` veya `autoKringK`) → PiP UDF (Shapely). H3 ön-filtresi Parquet row-group skip'i etkinleştirir; benchmark: 6–14× hızlanma. |
+| 2026-04-15 | `mobility.footfall_engine` | `FootfallEngine._filterByRadiusSpark` (güncellendi) | Metod | BBox ön-filtre → H3 kring ön-filtre (`k = ceil(radius / 174m)`) → Spark-native Haversine. Python UDF kullanmaz; Catalyst tarafından tam optimize edilir. k formülü düzeltildi: 87 m → 174 m (hücre çapı). |
+| 2026-04-15 | `mobility.footfall_engine` | `FootfallEngine.fetchDeviceRecords` | Metod | Device ID listesine göre tüm mobil kayıtları döndürür. ≤ 1000 cihaz → `isin` filtresi; > 1000 cihaz → broadcast join. |
 
 ---
 

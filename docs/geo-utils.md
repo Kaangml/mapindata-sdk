@@ -164,3 +164,131 @@ client.stop()
 
 Spark konfigürasyonu için bkz. [S3 ve EC2 Ortamı](../README.md#s3-ve-ec2-ortamı)
 
+---
+
+## `polygonAreaM2`
+
+```python
+polygonAreaM2(polygonCoords: list) -> float
+```
+
+GeoJSON polygon alanını **metre kare** cinsinden hesaplar.
+
+Shoelace (Gauss alan) formülünü kullanır; sonucu derece² → m² katsayısıyla çarpar.  
+Küçük polygon / büyük polygon karar eşiğinde (`_SMALL_POLYGON_AREA_M2 = 100 000 m²`) kullanılır.
+
+| Parametre | Tip | Açıklama |
+|---|---|---|
+| `polygonCoords` | list | GeoJSON `Polygon.coordinates` — `[[[lon, lat], ...]]` |
+
+**Döndürür:** `float` — alan (m²)
+
+**Örnek:**
+```python
+from mapindata.core.geo_utils import polygonAreaM2
+
+polygon = [[[28.972, 41.018], [28.978, 41.018], [28.978, 41.022], [28.972, 41.022], [28.972, 41.018]]]
+area = polygonAreaM2(polygon)
+# → ~300 000 m²  (yaklaşık 0.3 km²)
+```
+
+---
+
+## `h3CentroidCell`
+
+```python
+h3CentroidCell(lat: float, lon: float, res: int = 9) -> int
+```
+
+Koordinatın H3 hücresini **INT64** olarak döndürür.
+
+Parquet dosyalarında `h3_res9_id` sütunu INT64 olarak saklandığından bu çıktı  
+doğrudan Spark `filter` ifadelerinde kullanılabilir.
+
+| Parametre | Tip | Açıklama |
+|---|---|---|
+| `lat` | float | Enlem |
+| `lon` | float | Boylam |
+| `res` | int | H3 çözünürlük (varsayılan 9) |
+
+**Döndürür:** `int` — H3 hücre indeksi (64-bit)
+
+**Örnek:**
+```python
+from mapindata.core.geo_utils import h3CentroidCell
+
+cell = h3CentroidCell(41.0370, 28.9850)
+# → 613146799897739263  (Taksim Meydanı H3 res9 hücresi)
+```
+
+---
+
+## `h3PolygonCells`
+
+```python
+h3PolygonCells(polygonCoords: list, res: int = 9, bufferK: int = 1) -> list[int]
+```
+
+GeoJSON polygon için H3 hücrelerini **INT64 listesi** olarak döndürür.
+
+`h3shape_to_cells` polyfill uygular; ardından sınır hücrelerine `grid_disk(bufferK)` tamponu ekler.  
+Büyük / orta polygonlar (alan ≥ 100 000 m²) için uygundur.  
+Polyfill boş dönerse (< 1 H3 hücresi) boş liste döner — bu durumda `h3CentroidCell` + `autoKringK` kullanın.
+
+| Parametre | Tip | Açıklama |
+|---|---|---|
+| `polygonCoords` | list | GeoJSON `Polygon.coordinates` — `[[[lon, lat], ...]]` |
+| `res` | int | H3 çözünürlük (varsayılan 9) |
+| `bufferK` | int | Kenar tamponu halka sayısı (varsayılan 1) |
+
+**Döndürür:** `list[int]` — H3 hücre INT64 listesi
+
+**Örnek:**
+```python
+from mapindata.core.geo_utils import h3PolygonCells
+
+polygon = [[[28.820, 41.050], [28.880, 41.050], [28.880, 41.080], [28.820, 41.080], [28.820, 41.050]]]
+cells = h3PolygonCells(polygon)
+# → [613146..., 613147..., ...]  (Bağcılar bölgesi H3 hücreleri)
+```
+
+---
+
+## `autoKringK`
+
+```python
+autoKringK(polygonCoords: list, res: int = 9) -> int
+```
+
+Polygon kenar uzunluğuna göre H3 kring yarıçapını (`0` veya `1`) **otomatik** seçer.
+
+Karar kriteri: en kısa polygon kenarı H3 res9 çapından (≈ 174 m) büyükse `k=0` (sadece centroid),  
+küçükse `k=1` (centroid + 1 halka çevre hücreler).  
+`FootfallEngine._filterByPolygonSpark` tarafından küçük polygon yolunda kullanılır.
+
+| Parametre | Tip | Açıklama |
+|---|---|---|
+| `polygonCoords` | list | GeoJSON `Polygon.coordinates` — `[[[lon, lat], ...]]` |
+| `res` | int | Şu an yalnızca res=9 desteklenir |
+
+**Döndürür:** `int` — `0` veya `1`
+
+**H3 res9 referans değerleri:**
+
+| Değer | Ölçüm |
+|---|---|
+| Hücre kenarı | ≈ 87 m |
+| Hücre çapı (köşe–köşe) | ≈ 174 m |
+| Kapsama alanı | ≈ 0.105 km² |
+
+**Örnek:**
+```python
+from mapindata.core.geo_utils import autoKringK
+
+small = [[[28.972, 41.018], [28.974, 41.018], [28.974, 41.020], [28.972, 41.020], [28.972, 41.018]]]
+print(autoKringK(small))   # → 1  (kenar < 174 m)
+
+large = [[[28.820, 41.050], [28.880, 41.050], [28.880, 41.080], [28.820, 41.080], [28.820, 41.050]]]
+print(autoKringK(large))   # → 0  (kenar >> 174 m)
+```
+
