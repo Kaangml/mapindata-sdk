@@ -255,9 +255,11 @@ class FootfallEngine:
             d ≤ r  ↔  a ≤ sin(r / 2R)²   (UDF gerektirmez, Catalyst tarafından optimize edilir)
 
         Kring k formülü:
-            k = ceil(radiusMeters / 174m)  — H3 res9 hücre çapı ≈ 174m
-            kring(k) kapsaması = k × 174m ≥ radiusMeters  → sıfır negatif kaçırma
-            Benchmark doğrulaması: k=3 için r=500m → %0.00 sapma (14.54s → 1.14s)
+            k = ceil(radiusMeters / 174m)  — H3 res9 kenar uzunluğu ≈ 174m
+            Komşu hücre merkez-merkez mesafesi ≈ 301m (174 × √3)
+            kring dışında kalabilecek en yakın nokta = (k+1)×301 - 300m
+            Bu her zaman > r olduğundan false negative imkansız (300/174 = 1.72 marjı)
+            Benchmark doğrulaması: k=3 için r=500m → %0.00 sapma
         """
         from pyspark.sql.functions import col, cos, lit, radians, sin  # noqa: PLC0415
 
@@ -277,7 +279,9 @@ class FootfallEngine:
         try:
             import h3  # noqa: PLC0415
 
-            # H3 res9 hücre çapı ≈ 174m; kring(k) kapsaması = k × 174m
+            # H3 res9 kenar uzunluğu ≈ 174m; komşu merkez-merkez ≈ 301m (174×√3)
+            # kring(k) worst-case kapsaması = k×301 - 300m > r (false negative yok)
+            # k=ceil(r/174) → k×300 > r çünkü 300/174 = 1.72 → güvenlik marjı var
             # Benchmark: k=3 → r=500m → %0.00 sapma
             k = max(1, math.ceil(radiusMeters / 174.0))
             centerCell = h3.latlng_to_cell(centerLat, centerLon, 9)
