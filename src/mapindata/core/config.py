@@ -228,7 +228,7 @@ class ConfigManager:
 
         Suffix MAPIN_MOBILITY_DATA_SUFFIX env var ile override edilebilir.
         Varsayılan suffix il bazlı:
-          - istanbul → v2_h3_alt_dev_sorted  (alt=altitude 200m filter, repartitionByRange)
+          - istanbul → v2_h3_alt_consolidated  (alt=altitude 200m filter, repartitionByRange(130))
           - diğerleri → v2_h3_dev_sorted
 
         Args:
@@ -240,7 +240,7 @@ class ConfigManager:
         suffix = self._getEnv("MAPIN_MOBILITY_DATA_SUFFIX", "")
         if not suffix:
             suffix = (
-                "v2_h3_alt_dev_sorted"
+                "v2_h3_alt_consolidated"
                 if province.lower() == "istanbul"
                 else "v2_h3_dev_sorted"
             )
