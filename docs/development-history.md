@@ -36,10 +36,32 @@ SDK genelinde eklenen her sınıf, fonksiyon ve önemli yapısal değişiklik bu
 | 2026-04-15 | `mobility.footfall_engine` | `FootfallEngine._filterByPolygonSpark` (güncellendi) | Metod | 3-katmanlı pipeline: BBox ön-filtre → H3 hücre ön-filtre (`h3PolygonCells` veya `autoKringK`) → PiP UDF (Shapely). H3 ön-filtresi Parquet row-group skip'i etkinleştirir; benchmark: 6–14× hızlanma. |
 | 2026-04-15 | `mobility.footfall_engine` | `FootfallEngine._filterByRadiusSpark` (güncellendi) | Metod | BBox ön-filtre → H3 kring ön-filtre (`k = ceil(radius / 174m)`) → Spark-native Haversine. Python UDF kullanmaz; Catalyst tarafından tam optimize edilir. k formülü düzeltildi: 87 m → 174 m (hücre çapı). |
 | 2026-04-15 | `mobility.footfall_engine` | `FootfallEngine.fetchDeviceRecords` | Metod | Device ID listesine göre tüm mobil kayıtları döndürür. ≤ 1000 cihaz → `isin` filtresi; > 1000 cihaz → broadcast join. |
+| 2026-05-01 | `data.duckdb_client` | `DuckDBClient` | Sınıf | DuckDB bağlantısı ve S3 yol yönetimi. httpfs + spatial extension kurulumu, boto3 DefaultCredentialChain ile AWS kimlik aktarımı. FootfallEngine DuckDB metodlarının bağlantı kaynağı. |
+| 2026-05-01 | `data.duckdb_client` | `DuckDBClient.connect` | Metod | DuckDB bağlantısı başlatır; httpfs/spatial extension yükler, S3 kimlik bilgilerini boto3'ten alır, thread sayısını sparkMaster'dan türetir. Idempotent — zaten açık bağlantı tekrar başlatılmaz. |
+| 2026-05-01 | `data.duckdb_client` | `DuckDBClient.s3Path` | Metod | İl adından DuckDB-uyumlu S3 glob yolu üretir (`s3://` şema + `*.parquet` eki). ConfigManager.mobilityDataPath üzerinden türetilir. |
+| 2026-05-01 | `mobility.footfall_engine` | `ENGINE_DUCKDB`, `ENGINE_SPARK` | Sabit | Motor seçim sabitleri: `"duckdb"` ve `"spark"`. getCount* / getDeviceList* / fetchDeviceRecords metodlarındaki `engine=` parametresi için kullanılır. |
+| 2026-05-01 | `mobility.footfall_engine` | `FootfallEngine` (güncellendi) | Sınıf | Constructor `df`, `con`, `s3Path` parametreleri aldı. DuckDB ve Spark çalışma modları aynı nesne üzerinde desteklendi. |
+| 2026-05-01 | `mobility.footfall_engine` | `FootfallEngine.getCountByPolygon` (yeniden) | Metod | Unified API: Polygon / MultiPolygon / GeoJSON dosyası girdi destekli. `engine="duckdb"` (varsayılan) veya `engine="spark"`. Eski pure-Python `(records, coords)` imzası `_countByPolygonLocal`'a taşındı. |
+| 2026-05-01 | `mobility.footfall_engine` | `FootfallEngine.getCountByRadius` (yeniden) | Metod | Unified API: `engine` parametresi eklendi. DuckDB Haversine — BBox + SQL threshold; Spark — Catalyst-native formül. |
+| 2026-05-01 | `mobility.footfall_engine` | `FootfallEngine.getDeviceList` | Metod | Yeni birleşik metod: Polygon / MultiPolygon device listesi. DuckDB → `list[str]`; Spark → `DataFrame`. |
+| 2026-05-01 | `mobility.footfall_engine` | `FootfallEngine.getDeviceListByRadius` (yeniden) | Metod | Unified API: `engine` parametresi eklendi. İmza `(centerLat, centerLon, radiusMeters, engine)` olarak güncellendi. |
+| 2026-05-01 | `mobility.footfall_engine` | `FootfallEngine.fetchDeviceRecords` (yeniden) | Metod | Unified API: `engine` parametresi eklendi. DuckDB → `pandas.DataFrame` (≤1000: IN clause; >1000: geçici tablo + JOIN); Spark → Spark DataFrame (mevcut davranış korundu). |
+| 2026-05-01 | `mobility.footfall_engine` | `FootfallEngine._loadPolygonCoords` | Metod | Çoklu girdi formatı normalleştirici: `list`, `str` (GeoJSON dosya yolu), `dict` (GeoJSON Feature/Geometry). |
+| 2026-05-01 | `mobility.footfall_engine` | `FootfallEngine._normalizeCoords` | Metod | Polygon ve MultiPolygon koordinatlarını ring listesine dönüştürür. BBox hesabı ve H3 polyfill için ortak temel. |
+| 2026-05-01 | `mobility.footfall_engine` | `FootfallEngine._filterByPolygonSpark` (güncellendi) | Metod | MultiPolygon desteği: tüm ring'lerin birleşik BBox'ı, her ring'in H3 hücreleri toplandı. `_makePolygonUdf` → Shapely MultiPolygon desteği eklendi. |
+| 2026-05-01 | `mobility.footfall_engine` | `getCountByPolygonSpark` / `getCountByRadiusSpark` / `getDeviceListByPolygonSpark` / `getDeviceListByRadiusSpark` | Metod | Deprecated alias'lar. Geriye dönük uyumluluk için korundu; unified API'ye yönlendirilmedi (df imzası değişti). |
 
 ---
 
 ## Gelecek Eklemeler
 
 Planlanan özellikler için bkz. [future-features.md](future-features.md)
+
+---
+
+## Katkıda Bulunanlar
+
+| Ad | Rol |
+|---|---|
+| Kaan Gümele | SDK Geliştirici |
 

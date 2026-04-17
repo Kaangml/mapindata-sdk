@@ -59,3 +59,11 @@ Aşağıdaki konular kasıtlı olarak kapsam dışında bırakılmıştır:
 - Gerçek zamanlı (streaming) veri işleme
 - Görselleştirme (`viz` modülü ayrı geliştirme aşamasında)
 
+---
+
+## Katkıda Bulunanlar
+
+| Ad | Rol |
+|---|---|
+| Kaan Gümele | SDK Geliştirici |
+

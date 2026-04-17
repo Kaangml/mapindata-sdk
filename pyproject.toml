@@ -7,12 +7,15 @@ build-backend = "hatchling.build"
 # ---------------------------------------------------------------------------
 [project]
 name = "mapindata-sdk"
-version = "0.1.1"
+version = "0.3.0"
 description = "MapinData Analytics & Mobility Intelligence SDK"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Proprietary" }
-authors = [{ name = "MapinData", email = "dev@mapindata.com" }]
+license = { file = "LICENSE" }
+authors = [
+    { name = "MapinData", email = "team@mapindata.com" },
+    { name = "Kaan Gümele", email = "kaangumele@mapindata.com" },
+]
 keywords = ["mobility", "analytics", "geospatial", "footfall"]
 
 # Temel bağımlılıklar — her kurulumda zorunlu
@@ -36,6 +39,7 @@ data = [
     "sqlalchemy>=2.0.0",
     "pyspark>=3.5.0",
     "pyarrow>=14.0.0",
+    "duckdb>=1.0.0",
 ]
 mobility = [
     "mapindata-sdk[data]",

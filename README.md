@@ -43,7 +43,7 @@ pip install -e ".[all,dev]"
 
 | Extra | İçerik | Kurulum |
 |---|---|---|
-| `data` | boto3, pyspark, psycopg2, sqlalchemy, pyarrow | `mapindata-sdk[data]` |
+| `data` | boto3, pyspark, psycopg2, sqlalchemy, pyarrow, **duckdb** | `mapindata-sdk[data]` |
 | `mobility` | data dahil + geopandas, h3 | `mapindata-sdk[mobility]` |
 | `scraping` | playwright, apify-client, aiohttp, httpx | `mapindata-sdk[scraping]` |
 | `nlp` | transformers, torch, langdetect | `mapindata-sdk[nlp]` |
@@ -213,6 +213,27 @@ df_custom = client.loadData("s3a://mapindata-raw-data/custom/path/", format="par
 client.stop()
 ```
 
+#### `DuckDBClient`
+
+S3 üzerindeki Parquet veriye DuckDB ile doğrudan bağlanır. Polygon sorgularında
+Spark'tan **~70× daha hızlıdır**; Spark oturumu gerektirmez.
+
+```python
+from mapindata.core.config import ConfigManager
+from mapindata.data import DuckDBClient
+
+cfg = ConfigManager()
+duck = DuckDBClient(cfg)
+
+con = duck.connect()          # httpfs + spatial extension otomatik yüklenir
+path = duck.s3Path("istanbul") # → s3://mapindata-athena/.../istanbul/.../*.parquet
+
+duck.close()
+```
+
+`connect()` AWS kimlik bilgilerini `boto3.DefaultCredentialChain` üzerinden alır
+(IAM Role veya `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env).
+
 ---
 
 ### `mobility` — Mobil Veri Analitiği
@@ -221,50 +242,74 @@ client.stop()
 
 #### `FootfallEngine`
 
-İki çalışma modu vardır:
+Tek birleşik API; `engine` parametresiyle motor seçilir.
+Varsayılan motor **DuckDB** (polygon sorgularında Spark'tan ~70× hızlı).
 
-| Mod | Girdi | Ne zaman kullanılır |
-|---|---|---|
-| **Pure Python** | `list[dict]` | Küçük/test verisi, Spark gereksiz |
-| **Spark** | `pyspark.sql.DataFrame` | S3'ten okunan gerçek büyük veri |
+| Motor | Ne zaman |
+|---|---|
+| `engine="duckdb"` (varsayılan) | S3 verisi — polygon/radius/journey |
+| `engine="spark"` | Spark DataFrame zaten mevcutsa |
 
 ```python
+from mapindata.core.config import ConfigManager
+from mapindata.data import DuckDBClient
 from mapindata.mobility import FootfallEngine
 
-engine = FootfallEngine()  # latCol, lonCol, deviceCol özelleştirilebilir
+cfg = ConfigManager()
+duck = DuckDBClient(cfg)
 
-# ── Pure Python Modu ──────────────────────────────────────────────────
-records = [
-    {"device_aid": "d001", "latitude": 41.033, "longitude": 28.978},
-    {"device_aid": "d002", "latitude": 41.034, "longitude": 28.979},
-]
+# DuckDB motoru (varsayılan, önerilen)
+engine = FootfallEngine(con=duck.connect(), s3Path=duck.s3Path("istanbul"))
 
 polygon = [[[28.97, 41.03], [28.99, 41.03], [28.99, 41.04], [28.97, 41.04], [28.97, 41.03]]]
 
-count   = engine.getCountByPolygon(records, polygon)        # int
-devices = engine.getDeviceListByPolygon(records, polygon)   # list[str]
+# ── Footfall Sayımı ───────────────────────────────────────────────────
+count = engine.getCountByPolygon(polygon)             # → int
+count = engine.getCountByPolygon("data/besiktas.json") # GeoJSON dosyası
+count = engine.getCountByRadius(41.037, 28.985, 300)  # Haversine 300m
 
-count   = engine.getCountByRadius(records, 41.033, 28.978, 50)       # int, 50m yarıçap
-devices = engine.getDeviceListByRadius(records, 41.033, 28.978, 50)  # list[str]
+# ── Device Listesi ────────────────────────────────────────────────────
+devices = engine.getDeviceList(polygon)               # → list[str]
+devices = engine.getDeviceListByRadius(41.037, 28.985, 300)
 
-# ── Spark Modu (S3 verisi için) ───────────────────────────────────────
+# ── Device Journey (tüm kayıtlar) ────────────────────────────────────
+records = engine.fetchDeviceRecords(devices[:50])     # → pandas.DataFrame
+
+duck.close()
+```
+
+**Spark motoru** (Spark DataFrame zaten mevcutsa):
+
+```python
 from mapindata.data import S3Client
 
 client = S3Client(cfg)
-spark  = client.createSession("FootfallJob")
-df     = client.loadMobilityData(province="Istanbul")
+client.createSession("FootfallJob")
+df = client.loadCleanMobilityData("istanbul")
 
-count      = engine.getCountByPolygonSpark(df, polygon)           # int
-devices_df = engine.getDeviceListByPolygonSpark(df, polygon)      # DataFrame
-devices_df.write.parquet("/output/devices/")
+engine = FootfallEngine(df=df)
 
-count      = engine.getCountByRadiusSpark(df, 41.033, 28.978, 50)
-devices_df = engine.getDeviceListByRadiusSpark(df, 41.033, 28.978, 50)
+count      = engine.getCountByPolygon(polygon, engine="spark")       # int
+devices_df = engine.getDeviceList(polygon, engine="spark")           # Spark DataFrame
+records_df = engine.fetchDeviceRecords(device_ids, engine="spark")   # Spark DataFrame
 
 client.stop()
 ```
 
-> **GeoJSON Koordinat Sırası:** `polygonCoords` her zaman `[lon, lat]` sırasındadır.
+**MultiPolygon ve GeoJSON** desteklenir:
+
+```python
+# MultiPolygon — birden fazla ayrık alan
+multi = [[[[28.97,41.03],[28.99,41.03],[28.99,41.04],[28.97,41.03]]],
+          [[[29.02,40.98],[29.03,40.98],[29.03,40.99],[29.02,40.98]]]]
+count = engine.getCountByPolygon(multi)
+
+# GeoJSON Feature / Geometry dict
+count = engine.getCountByPolygon({"type": "Polygon", "coordinates": polygon})
+```
+
+> **GeoJSON Koordinat Sırası:** `polygonCoords` her zaman `[lon, lat]` sırasındadır.  
+> Detaylı API referansı: [docs/footfall-engine.md](docs/footfall-engine.md)
 
 ---
 
@@ -311,8 +356,9 @@ pytest tests/data/ -v
 |---|---|
 | `core.config` | ✅ Testler geçiyor |
 | `core.geo_utils` | ✅ Testler geçiyor |
-| `mobility.footfall_engine` | ✅ Pure Python testler geçiyor |
+| `mobility.footfall_engine` | ✅ Unified API, MultiPolygon, GeoJSON testler geçiyor |
 | `data.s3_client` | ✅ Config testleri geçiyor; S3 testleri entegrasyon ortamı gerektirir |
+| `data.duckdb_client` | ✅ Birim testler geçiyor; S3 testleri entegrasyon ortamı gerektirir |
 | `analytics`, `scraping`, `viz` | ⏳ Henüz implement edilmedi |
 
 ---
@@ -321,6 +367,7 @@ pytest tests/data/ -v
 
 | Dosya | İçerik |
 |---|---|
+| [docs/footfall-engine.md](docs/footfall-engine.md) | `FootfallEngine` + `DuckDBClient` tam API referansı, MultiPolygon örnekleri, benchmark tablosu |
 | [docs/geo-utils.md](docs/geo-utils.md) | `haversineDistance`, `pointInPolygon`, `boundingBox`, `centroid` fonksiyon referansı |
 | [docs/development-history.md](docs/development-history.md) | Her eklenen sınıf/metod kronolojik tablo |
 | [docs/future-features.md](docs/future-features.md) | Planlanmış özellikler (FF-001, FF-003...) |
@@ -330,4 +377,20 @@ pytest tests/data/ -v
 
 ## Lisans
 
-Proprietary — MapinData © 2026
+Bu yazılım **tescilli** (proprietary) bir lisans altında dağıtılmaktadır.
+
+> **Uyarı:** Bu yazılımın tamamı veya herhangi bir bölümü; MapinData'nın önceden yazılı izni olmadan  
+> kopyalanamaz, çoğaltılamaz, dağıtılamaz, değiştirilemez veya ticari amaçla kullanılamaz.
+
+Lisansın tam metni: [LICENSE](LICENSE)
+
+**İzin için:** dev@mapindata.com  
+**Telif hakkı:** MapinData ve yetkili katkıcılar © 2026
+
+---
+
+## Katkıda Bulunanlar
+
+| Ad | Rol |
+|---|---|
+| Kaan Gümele | SDK Geliştirici |

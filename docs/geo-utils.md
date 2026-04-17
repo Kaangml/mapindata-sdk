@@ -135,32 +135,23 @@ S3Client.loadMobilityData()          → Spark DataFrame
 ```python
 from mapindata.core.config import ConfigManager
 from mapindata.core.geo_utils import boundingBox
-from mapindata.data.s3_client import S3Client
+from mapindata.data.duckdb_client import DuckDBClient
 from mapindata.mobility.footfall_engine import FootfallEngine
 
 cfg = ConfigManager()
-client = S3Client(cfg)
-spark = client.createSession("FootfallJob")
+duck = DuckDBClient(cfg)
 
-# 1. Veriyi yükle
-df = client.loadMobilityData(province="Istanbul")
+# Engine DuckDB motoru ile başlat (varsayılan, ~70× hızlı)
+engine = FootfallEngine(con=duck.connect(), s3Path=duck.s3Path("istanbul"))
 
-# 2. Polygon listenden bounding box hesapla → ön filtre
-coords = [[41.03, 28.97], [41.07, 28.97], [41.07, 29.01], [41.03, 29.01]]
-bb = boundingBox(coords)
-df = df.filter(
-    (df.latitude  >= bb["minLat"]) & (df.latitude  <= bb["maxLat"]) &
-    (df.longitude >= bb["minLon"]) & (df.longitude <= bb["maxLon"])
-).cache()
-
-# 3. Footfall hesapla
-engine = FootfallEngine()
 polygon = [[[28.97, 41.03], [29.01, 41.03], [29.01, 41.07], [28.97, 41.07], [28.97, 41.03]]]
-count = engine.getCountByPolygonSpark(df, polygon)
+count = engine.getCountByPolygon(polygon)
 print(f"Footfall: {count:,} unique device")
 
-client.stop()
+duck.close()
 ```
+
+> Spark motoru da desteklenir: `FootfallEngine(df=spark_df)` → `engine.getCountByPolygon(polygon, engine="spark")`
 
 Spark konfigürasyonu için bkz. [S3 ve EC2 Ortamı](../README.md#s3-ve-ec2-ortamı)
 
@@ -291,4 +282,12 @@ print(autoKringK(small))   # → 1  (kenar < 174 m)
 large = [[[28.820, 41.050], [28.880, 41.050], [28.880, 41.080], [28.820, 41.080], [28.820, 41.050]]]
 print(autoKringK(large))   # → 0  (kenar >> 174 m)
 ```
+
+---
+
+## Katkıda Bulunanlar
+
+| Ad | Rol |
+|---|---|
+| Kaan Gümele | SDK Geliştirici |
 

@@ -96,3 +96,11 @@ Aynı kod birden fazla yerde tekrar edilmemeli.
 |---|---|
 | Küçük ve anlamlı commit | Commit mesajı değişikliği anlatmalıdır |
 | PR zorunludur | Ana dala doğrudan push yapılmaz |
+---
+
+## Katkıda Bulunanlar
+
+| Ad | Rol |
+|---|---|
+| Kaan Gümele | SDK Geliştirici |
+| Mehmet Emin Taşkıranoğlu | Kodlama Standartları |
