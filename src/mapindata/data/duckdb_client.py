@@ -101,15 +101,32 @@ class DuckDBClient:
 
     def _configureS3(self) -> None:
         """
-        boto3 DefaultCredentialChain üzerinden AWS kimlik bilgilerini alır
-        ve DuckDB'ye aktarır.
+        DuckDB için AWS kimlik doğrulamasını iki kademeli olarak kurar.
 
-        boto3 mevcut değilse veya kimlik bilgileri bulunamazsa IAM Role
-        odaklı erişim için S3 bölgesi yine de ayarlanır.
+        Kademe 1 — Native credential chain (tercih edilen):
+            SET s3_use_credential_chain = true
+            DuckDB 1.0+ built-in AWS SDK sırası:
+              env var → IAM Role (EC2 metadata) → ~/.aws/credentials → container role
+            Tek bir SQL komutu, kimlik bilgileri Python katmanından geçmez.
+
+        Kademe 2 — boto3 açık kimlik aktarımı (fallback):
+            DuckDB build'inde credential chain devre dışıysa boto3 üzerinden alıp
+            SET komutuyla aktar. Sadece bu kademede geçici token da aktarılır.
+
+        Her iki kademede de S3 bölgesi ayarlanır.
         """
         region = self._config.awsRegion
         self._con.execute(f"SET s3_region='{region}'")
 
+        # Kademe 1: native credential chain
+        try:
+            self._con.execute("SET s3_use_credential_chain=true")
+            return
+        except Exception:
+            pass
+
+        # Kademe 2: boto3 fallback — kimlik bilgileri SQL string'ine geçirilir
+        # sadece credential chain desteklenmediğinde çalışır
         try:
             import boto3  # noqa: PLC0415
 
@@ -117,12 +134,17 @@ class DuckDBClient:
             creds = session.get_credentials()
             if creds is not None:
                 resolved = creds.get_frozen_credentials()
-                self._con.execute(f"SET s3_access_key_id='{resolved.access_key}'")
-                self._con.execute(f"SET s3_secret_access_key='{resolved.secret_key}'")
+                self._con.execute(
+                    "SET s3_access_key_id=?", [resolved.access_key]
+                )
+                self._con.execute(
+                    "SET s3_secret_access_key=?", [resolved.secret_key]
+                )
                 if resolved.token:
-                    self._con.execute(f"SET s3_session_token='{resolved.token}'")
+                    self._con.execute(
+                        "SET s3_session_token=?", [resolved.token]
+                    )
         except ImportError:
-            # boto3 kurulu değil — IAM Role üzerinden EC2'de çalışıyorsa yeterli
             pass
 
     def _configureCores(self) -> None:
