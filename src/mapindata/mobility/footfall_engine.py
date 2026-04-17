@@ -251,26 +251,54 @@ class FootfallEngine:
     # DuckDB implementasyon katmanı
     # ------------------------------------------------------------------
 
+    def _duckH3Kring(self, centerLat: float, centerLon: float, radiusMeters: float) -> list[int]:
+        """
+        H3 res9 kring hücrelerini INT64 listesi olarak döndürür.
+
+        Spark kring formülüyle birebir: k = ceil(radiusMeters / 174m)
+        h3 paketi yoksa boş liste döner — ön-filtre atlanır, sorgu doğruluğu korunur.
+        """
+        try:
+            import h3  # noqa: PLC0415
+
+            k = max(1, math.ceil(radiusMeters / 174.0))
+            center = h3.latlng_to_cell(centerLat, centerLon, 9)
+            return [h3.str_to_int(c) for c in h3.grid_disk(center, k)]
+        except ImportError:
+            return []
+
     def _duckCountByPolygon(self, polygonCoords: list) -> int:
         """MultiPolygon desteği: UNION ile her ring ayrı sorgu → DISTINCT toplam."""
         rings = self._normalizeCoords(polygonCoords)
         if len(rings) == 1:
             geoJson = json.dumps({"type": "Polygon", "coordinates": polygonCoords
                                   if isinstance(polygonCoords[0][0], list) else polygonCoords})
+            h3Cells = self._h3CellsForPolygon(rings)
+            h3Clause = (
+                f" AND h3_res9_id IN ({', '.join(str(c) for c in h3Cells)})"
+                if h3Cells else ""
+            )
             return self._runDuckSql(
                 f"SELECT COUNT(DISTINCT {self.deviceCol}) FROM read_parquet('{self._s3Path}')"
                 f" WHERE ST_Contains(ST_GeomFromGeoJSON('{geoJson}'),"
                 f" ST_Point({self.lonCol}, {self.latCol}))"
+                f"{h3Clause}"
             )
 
         # MultiPolygon: her polygon için UNION subquery, en dışta DISTINCT
         subqueries = []
         for ring in rings:
             gj = json.dumps({"type": "Polygon", "coordinates": [ring]})
+            h3Cells = self._h3CellsForPolygon([ring])
+            h3Clause = (
+                f" AND h3_res9_id IN ({', '.join(str(c) for c in h3Cells)})"
+                if h3Cells else ""
+            )
             subqueries.append(
                 f"SELECT {self.deviceCol} FROM read_parquet('{self._s3Path}')"
                 f" WHERE ST_Contains(ST_GeomFromGeoJSON('{gj}'),"
                 f" ST_Point({self.lonCol}, {self.latCol}))"
+                f"{h3Clause}"
             )
         union = " UNION ".join(subqueries)
         return self._runDuckSql(
@@ -280,18 +308,24 @@ class FootfallEngine:
     def _duckCountByRadius(
         self, centerLat: float, centerLon: float, radiusMeters: float
     ) -> int:
-        """Haversine eşik kontrolü DuckDB SQL ile — Parquet sütun push-down uyumlu."""
+        """Haversine eşik kontrolü DuckDB SQL ile — H3 kring + BBox + Parquet push-down uyumlu."""
         R = 6_371_000.0
         threshold = math.sin(radiusMeters / (2.0 * R)) ** 2
         phi1Cos = math.cos(math.radians(centerLat))
         dLat = math.degrees(radiusMeters / R)
         dLon = math.degrees(radiusMeters / (R * phi1Cos))
+        h3Cells = self._duckH3Kring(centerLat, centerLon, radiusMeters)
+        h3Clause = (
+            f"AND h3_res9_id IN ({', '.join(str(c) for c in h3Cells)})"
+            if h3Cells else ""
+        )
         return self._runDuckSql(
             f"""
             SELECT COUNT(DISTINCT {self.deviceCol})
             FROM read_parquet('{self._s3Path}')
             WHERE {self.latCol} BETWEEN {centerLat - dLat} AND {centerLat + dLat}
               AND {self.lonCol} BETWEEN {centerLon - dLon} AND {centerLon + dLon}
+              {h3Clause}
               AND (
                     pow(sin(radians({self.latCol} - {centerLat}) / 2.0), 2)
                   + {phi1Cos} * cos(radians({self.latCol}))
@@ -306,10 +340,16 @@ class FootfallEngine:
         subqueries = []
         for ring in rings:
             gj = json.dumps({"type": "Polygon", "coordinates": [ring]})
+            h3Cells = self._h3CellsForPolygon([ring])
+            h3Clause = (
+                f" AND h3_res9_id IN ({', '.join(str(c) for c in h3Cells)})"
+                if h3Cells else ""
+            )
             subqueries.append(
                 f"SELECT {self.deviceCol} FROM read_parquet('{self._s3Path}')"
                 f" WHERE ST_Contains(ST_GeomFromGeoJSON('{gj}'),"
                 f" ST_Point({self.lonCol}, {self.latCol}))"
+                f"{h3Clause}"
             )
         union = " UNION ".join(subqueries)
         rows = self._con.execute(union).fetchall()
@@ -324,12 +364,18 @@ class FootfallEngine:
         phi1Cos = math.cos(math.radians(centerLat))
         dLat = math.degrees(radiusMeters / R)
         dLon = math.degrees(radiusMeters / (R * phi1Cos))
+        h3Cells = self._duckH3Kring(centerLat, centerLon, radiusMeters)
+        h3Clause = (
+            f"AND h3_res9_id IN ({', '.join(str(c) for c in h3Cells)})"
+            if h3Cells else ""
+        )
         rows = self._con.execute(
             f"""
             SELECT DISTINCT {self.deviceCol}
             FROM read_parquet('{self._s3Path}')
             WHERE {self.latCol} BETWEEN {centerLat - dLat} AND {centerLat + dLat}
               AND {self.lonCol} BETWEEN {centerLon - dLon} AND {centerLon + dLon}
+              {h3Clause}
               AND (
                     pow(sin(radians({self.latCol} - {centerLat}) / 2.0), 2)
                   + {phi1Cos} * cos(radians({self.latCol}))
